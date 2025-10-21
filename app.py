@@ -13,10 +13,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# In-memory storage (use database in production)
+# In-memory storage
 strings_db: Dict[str, dict] = {}
 
-# Models
+# Request/Response Models
 class StringInput(BaseModel):
     value: str
     
@@ -155,7 +155,8 @@ def apply_filters(strings_list: List[dict], filters: Dict) -> List[dict]:
     
     return filtered
 
-# API Endpoints
+# API Endpoints 
+
 @app.post("/strings", status_code=201, response_model=StringResponse)
 async def create_string(string_input: StringInput):
     """Analyze and store a new string"""
@@ -172,6 +173,28 @@ async def create_string(string_input: StringInput):
     
     return result
 
+@app.get("/strings/filter-by-natural-language", response_model=NaturalLanguageResponse)
+async def filter_by_natural_language(query: str = Query(..., min_length=1)):
+    """Filter strings using natural language queries - MUST be before /strings/{string_value}"""
+    # Parse natural language query
+    filters = parse_natural_language_query(query)
+    
+    if not filters:
+        raise HTTPException(status_code=400, detail="Unable to parse natural language query")
+    
+    # Apply filters
+    all_strings = list(strings_db.values())
+    filtered_strings = apply_filters(all_strings, filters)
+    
+    return {
+        "data": filtered_strings,
+        "count": len(filtered_strings),
+        "interpreted_query": {
+            "original": query,
+            "parsed_filters": filters
+        }
+    }
+
 @app.get("/strings", response_model=StringListResponse)
 async def get_all_strings(
     is_palindrome: Optional[bool] = Query(None),
@@ -185,7 +208,7 @@ async def get_all_strings(
     if min_length is not None and max_length is not None and min_length > max_length:
         raise HTTPException(status_code=400, detail="min_length cannot be greater than max_length")
     
-    # filters dictionary
+    # Build filters dictionary
     filters = {}
     if is_palindrome is not None:
         filters["is_palindrome"] = is_palindrome
@@ -208,30 +231,6 @@ async def get_all_strings(
         "filters_applied": filters
     }
 
-
-@app.get("/strings/filter-by-natural-language", response_model=NaturalLanguageResponse)
-async def filter_by_natural_language(query: str = Query(..., min_length=1)):
-    """Filter strings using natural language queries"""
-    # Parse natural language query
-    filters = parse_natural_language_query(query)
-    
-    if not filters:
-        raise HTTPException(status_code=400, detail="Unable to parse natural language query")
-    
-    # Apply filters
-    all_strings = list(strings_db.values())
-    filtered_strings = apply_filters(all_strings, filters)
-    
-    return {
-        "data": filtered_strings,
-        "count": len(filtered_strings),
-        "interpreted_query": {
-            "original": query,
-            "parsed_filters": filters
-        }
-    }
-
-
 @app.get("/strings/{string_value}", response_model=StringResponse)
 async def get_string(string_value: str = Path(...)):
     """Retrieve a specific string by its value"""
@@ -241,7 +240,6 @@ async def get_string(string_value: str = Path(...)):
         raise HTTPException(status_code=404, detail="String does not exist in the system")
     
     return strings_db[sha256_hash]
-
 
 @app.delete("/strings/{string_value}", status_code=204)
 async def delete_string(string_value: str = Path(...)):
